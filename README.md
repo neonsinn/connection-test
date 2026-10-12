@@ -32,3 +32,14 @@ An Android-first, static web app for viewing MP4 videos stored in a selected Goo
 1. Confirm Google sign-in and folder browsing on Android.
 2. Add editable tags and favorites, storing metadata separately in Google Drive with narrowly scoped write access.
 3. Improve streaming and video thumbnails after confirming browser/Drive behavior.
+
+
+## Native Android APK (current development target)
+Native Android source is in `android/`; GitHub Actions workflow is `.github/workflows/android-apk.yml`.
+On a push affecting `android/**`, the workflow attempts to build a **debug APK** and upload it as an Actions artifact named `drive-video-library-debug-apk`. The APK is not yet verified as building or signing in correctly.
+
+To check: open **Actions** → **Build Android APK** → latest run. A successful run exposes an artifact ZIP containing `app-debug.apk`. If it fails, share the failed step's log so the source can be fixed.
+
+The native app uses Google Sign-In with Drive read-only scope. Google Cloud setup is required: enable the Drive API, configure the OAuth consent screen, and register an **Android OAuth client** for package `com.neonsinn.drivelibrary` with the SHA-1 of the APK's signing certificate. **GitHub-hosted debug APKs are signed with a debug key created on the build runner, which is not stable across runners**; for reliable sign-in across builds, configure a persistent signing keystore in GitHub Actions secrets (or build and sign locally with a stable key) and register its SHA-1 in Google Cloud. Do not commit private keystores, passwords, or tokens.
+
+This native APK is the intended direction; the earlier root-level web prototype remains in the repository as a separate experiment, not the APK's interface.
