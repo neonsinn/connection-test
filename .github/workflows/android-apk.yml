@@ -17,7 +17,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      # GitHub-hosted ubuntu runners include an Android SDK. The setup-android
+      # action fails on some images when it tries to install obsolete 'tools'.
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/platforms" || exit 1
+          ls "$ANDROID_HOME/platforms"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
