@@ -4,6 +4,9 @@ import android.app.*;
 import android.os.*;
 import android.content.*;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.drawable.GradientDrawable;
 import android.view.*;
 import android.widget.*;
 import android.text.*;
@@ -23,18 +26,21 @@ public class MainActivity extends Activity {
     private static final int SIGN_IN = 100;
     private static final String DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService thumbnails = Executors.newFixedThreadPool(3);
+    private final android.util.LruCache<String,Bitmap> thumbnailCache = new android.util.LruCache<>(40);
     private GoogleSignInAccount account;
     private String token, folderId, folderName, nextPage;
     private final ArrayList<Video> videos = new ArrayList<>();
-    private LinearLayout root, cards;
+    private LinearLayout root;
+    private GridLayout cards;
     private TextView status, heading;
     private EditText search;
     private Button more;
     private boolean loading = false;
 
     static class Video {
-        String id, name, size;
-        Video(String i,String n,String s){id=i;name=n;size=s;}
+        String id, name, size, thumbnail;
+        Video(String i,String n,String s,String t){id=i;name=n;size=s;thumbnail=t;}
     }
 
     @Override public void onCreate(Bundle b){
@@ -69,7 +75,7 @@ public class MainActivity extends Activity {
         heading=text(folderName,20);root.addView(heading);
         search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(0xffabb1c2);search.setHint("Search video filenames");root.addView(search);
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){render();}public void afterTextChanged(Editable e){}});
-        cards=new LinearLayout(this);cards.setOrientation(LinearLayout.VERTICAL);root.addView(cards);
+        cards=new GridLayout(this);cards.setColumnCount(2);root.addView(cards);
         more=button("Load more",v->loadVideos(false));root.addView(more);more.setVisibility(View.GONE);
     }
     private void setStatus(String s){status.setText(s);}
@@ -156,11 +162,11 @@ public class MainActivity extends Activity {
         String page=nextPage;
         io.execute(()->{
             try{
-                Map<String,String> p=params("q","'"+quoted(folderId)+"' in parents and trashed = false and (mimeType = 'video/mp4' or name contains '.mp4' or name contains '.MP4')","fields","nextPageToken,files(id,name,size,mimeType)","pageSize","100","orderBy","name");
+                Map<String,String> p=params("q","'"+quoted(folderId)+"' in parents and trashed = false and (mimeType = 'video/mp4' or name contains '.mp4' or name contains '.MP4')","fields","nextPageToken,files(id,name,size,mimeType,thumbnailLink)","pageSize","100","orderBy","name");
                 if(page!=null)p.put("pageToken",page);
                 JSONObject response=drive("files",p);
                 JSONArray items=response.getJSONArray("files");ArrayList<Video> found=new ArrayList<>();
-                for(int i=0;i<items.length();i++){JSONObject f=items.getJSONObject(i);found.add(new Video(f.getString("id"),f.getString("name"),f.optString("size","")));}
+                for(int i=0;i<items.length();i++){JSONObject f=items.getJSONObject(i);found.add(new Video(f.getString("id"),f.getString("name"),f.optString("size",""),f.optString("thumbnailLink","")));}
                 String next=response.optString("nextPageToken",null);
                 runOnUiThread(()->{
                     videos.addAll(found);nextPage=next;loading=false;more.setEnabled(true);more.setVisibility(nextPage==null?View.GONE:View.VISIBLE);
@@ -169,28 +175,61 @@ public class MainActivity extends Activity {
             }catch(Exception e){runOnUiThread(()->{loading=false;more.setEnabled(true);setStatus("Video list error: "+e.getMessage());});}
         });
     }
+    private void play(Video video){
+        Intent intent=new Intent(this,PlayerActivity.class);
+        intent.putExtra("id",video.id);intent.putExtra("name",video.name);intent.putExtra("token",token);
+        startActivity(intent);
+    }
+    private void showThumbnail(Video video,ImageView image){
+        if(video.thumbnail==null || video.thumbnail.isEmpty())return;
+        Bitmap cached=thumbnailCache.get(video.id);
+        if(cached!=null){image.setImageBitmap(cached);return;}
+        thumbnails.execute(()->{
+            try{
+                HttpURLConnection conn=(HttpURLConnection)new URL(video.thumbnail).openConnection();
+                conn.setConnectTimeout(10000);conn.setReadTimeout(15000);
+                conn.setRequestProperty("Authorization","Bearer "+token);
+                try(InputStream input=conn.getInputStream()){
+                    BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;
+                    Bitmap bitmap=BitmapFactory.decodeStream(input,null,options);
+                    if(bitmap!=null){thumbnailCache.put(video.id,bitmap);
+                        runOnUiThread(()->{if(video.id.equals(image.getTag()))image.setImageBitmap(bitmap);});}
+                }finally{conn.disconnect();}
+            }catch(Exception ignored){} // Keep the play icon when Drive has no preview.
+        });
+    }
     private void render(){
-        if(cards==null)return;
-        cards.removeAllViews();String query=search.getText().toString().toLowerCase(Locale.ROOT);
+        if(cards==null || search==null)return;
+        cards.removeAllViews();
+        String query=search.getText().toString().toLowerCase(Locale.ROOT);
+        int width=(getResources().getDisplayMetrics().widthPixels-dp(48))/2;
         int count=0;
         for(Video video:videos){
             if(!video.name.toLowerCase(Locale.ROOT).contains(query))continue;
             count++;
-            Button row=button("▶  "+video.name,v->{
-                Intent intent=new Intent(this,PlayerActivity.class);
-                intent.putExtra("id",video.id);intent.putExtra("name",video.name);intent.putExtra("token",token);
-                startActivity(intent);
-            });
-            row.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
-            row.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff293148));
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(66));lp.setMargins(0,dp(5),0,dp(5));cards.addView(row,lp);
+            LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);
+            tile.setPadding(dp(4),dp(5),dp(4),dp(8));
+            ImageView image=new ImageView(this);image.setTag(video.id);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setBackgroundColor(0xff293148);
+            image.setImageResource(android.R.drawable.ic_media_play);
+            tile.addView(image,new LinearLayout.LayoutParams(-1,dp(112)));
+            TextView title=text(video.name,13);title.setMaxLines(2);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            tile.addView(title,new LinearLayout.LayoutParams(-1,dp(54)));
+            tile.setOnClickListener(v->play(video));
+            GridLayout.LayoutParams lp=new GridLayout.LayoutParams();
+            lp.width=width;lp.height=dp(184);
+            lp.setMargins(0,dp(3),0,dp(3));cards.addView(tile,lp);
+            showThumbnail(video,image);
         }
-        if(count==0)cards.addView(text(videos.isEmpty()?"No videos loaded yet.":"No matching filenames.",14));
+        if(count==0){TextView empty=text(videos.isEmpty()?"No videos loaded yet.":"No matching filenames.",14);
+            GridLayout.LayoutParams lp=new GridLayout.LayoutParams();lp.width=-1;cards.addView(empty,lp);}
     }
     private void disconnect(){
         token=null;account=null;videos.clear();nextPage=null;render();
         GoogleSignIn.getClient(this,new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN).requestEmail().requestScopes(new Scope(DRIVE_SCOPE)).build()).signOut();
         setStatus("Disconnected. Sign in to continue.");
     }
-    @Override protected void onDestroy(){io.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){io.shutdownNow();thumbnails.shutdownNow();super.onDestroy();}
 }
