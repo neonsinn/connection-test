@@ -74,7 +74,6 @@ public class MainActivity extends Activity {
         root.addView(button("Connect Google Drive",v->signIn()));
         root.addView(button("Choose Drive folder",v->chooseFolder("root","My Drive",new ArrayList<>())));
         root.addView(button("Refresh videos",v->loadVideos(true)));
-        root.addView(button("Disconnect account",v->disconnect()));
         heading=text(folderName,20);root.addView(heading);
         search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(0xffabb1c2);search.setHint("Search video filenames");root.addView(search);
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){render();}public void afterTextChanged(Editable e){}});
