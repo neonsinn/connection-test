@@ -79,13 +79,18 @@ public class MainActivity extends Activity {
         search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(0xffabb1c2);search.setHint("Search video filenames");root.addView(search);
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){render();}public void afterTextChanged(Editable e){}});
         sortBy=new Spinner(this);
-        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,SORT_OPTIONS);
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,SORT_OPTIONS);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         sortBy.setAdapter(adapter);
+        sortBy.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xffdce4f5));
+        sortBy.setOnTouchListener((v,event)->{if(event.getAction()==android.view.MotionEvent.ACTION_DOWN){sortBy.setPopupBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xff293148));}return false;});
         sortBy.setSelection(getPreferences(0).getInt("sortMode",0));
         sortBy.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
             public void onNothingSelected(android.widget.AdapterView<?> parent){}
             public void onItemSelected(android.widget.AdapterView<?> parent,View view,int position,long id){
-                getPreferences(0).edit().putInt("sortMode",position).apply();render();
+                getPreferences(0).edit().putInt("sortMode",position).apply();
+                if(view instanceof TextView)((TextView)view).setTextColor(Color.WHITE);
+                render();
             }
         });
         root.addView(sortBy);
@@ -215,7 +220,7 @@ public class MainActivity extends Activity {
                 conn.setConnectTimeout(10000);conn.setReadTimeout(15000);
                 conn.setRequestProperty("Authorization","Bearer "+token);
                 try(InputStream input=conn.getInputStream()){
-                    BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=2;
+                    BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=1;
                     Bitmap bitmap=BitmapFactory.decodeStream(input,null,options);
                     if(bitmap!=null){thumbnailCache.put(video.id,bitmap);
                         runOnUiThread(()->{if(video.id.equals(image.getTag()))image.setImageBitmap(bitmap);});}
@@ -242,21 +247,22 @@ public class MainActivity extends Activity {
             if(!video.name.toLowerCase(Locale.ROOT).contains(query))continue;
             count++;
             LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);
-            tile.setPadding(dp(4),dp(5),dp(4),dp(8));
+            tile.setPadding(dp(4),dp(5),dp(4),dp(14));
             ImageView image=new ImageView(this);image.setTag(video.id);
-            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setBackgroundColor(0xff293148);
             image.setImageResource(android.R.drawable.ic_media_play);
-            tile.addView(image,new LinearLayout.LayoutParams(-1,dp(112)));
+            tile.addView(image,new LinearLayout.LayoutParams(-1,dp(126)));
             TextView title=text(video.name,13);title.setMaxLines(2);
             title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            tile.addView(title,new LinearLayout.LayoutParams(-1,dp(48)));
+            tile.addView(title,new LinearLayout.LayoutParams(-1,-2));
             TextView duration=text(durationText(video.durationMs),12);
             duration.setTextColor(0xffb6c3d9);
-            tile.addView(duration,new LinearLayout.LayoutParams(-1,dp(30)));
+            duration.setPadding(0,dp(4),0,dp(5));
+            tile.addView(duration,new LinearLayout.LayoutParams(-1,-2));
             tile.setOnClickListener(v->play(video));
             GridLayout.LayoutParams lp=new GridLayout.LayoutParams();
-            lp.width=width;lp.height=dp(210);
+            lp.width=width;lp.height=-2;
             lp.setMargins(0,dp(3),0,dp(3));cards.addView(tile,lp);
             showThumbnail(video,image);
         }
