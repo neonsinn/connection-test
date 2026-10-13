@@ -35,12 +35,15 @@ public class MainActivity extends Activity {
     private GridLayout cards;
     private TextView status, heading;
     private EditText search;
+    private Spinner sortBy;
+    private static final String[] SORT_OPTIONS={"Name A–Z","Name Z–A","Newest first","Oldest first","Longest first","Shortest first"};
     private Button more;
     private boolean loading = false;
 
     static class Video {
-        String id, name, size, thumbnail;
-        Video(String i,String n,String s,String t){id=i;name=n;size=s;thumbnail=t;}
+        String id, name, size, thumbnail, created;
+        long durationMs;
+        Video(String i,String n,String s,String t,String c,long d){id=i;name=n;size=s;thumbnail=t;created=c;durationMs=d;}
     }
 
     @Override public void onCreate(Bundle b){
@@ -75,6 +78,17 @@ public class MainActivity extends Activity {
         heading=text(folderName,20);root.addView(heading);
         search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(0xffabb1c2);search.setHint("Search video filenames");root.addView(search);
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){render();}public void afterTextChanged(Editable e){}});
+        sortBy=new Spinner(this);
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,SORT_OPTIONS);
+        sortBy.setAdapter(adapter);
+        sortBy.setSelection(getPreferences(0).getInt("sortMode",0));
+        sortBy.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener(){
+            public void onNothingSelected(android.widget.AdapterView<?> parent){}
+            public void onItemSelected(android.widget.AdapterView<?> parent,View view,int position,long id){
+                getPreferences(0).edit().putInt("sortMode",position).apply();render();
+            }
+        });
+        root.addView(sortBy);
         cards=new GridLayout(this);cards.setColumnCount(2);root.addView(cards);
         more=button("Load more",v->loadVideos(false));root.addView(more);more.setVisibility(View.GONE);
     }
@@ -162,11 +176,11 @@ public class MainActivity extends Activity {
         String page=nextPage;
         io.execute(()->{
             try{
-                Map<String,String> p=params("q","'"+quoted(folderId)+"' in parents and trashed = false and (mimeType = 'video/mp4' or name contains '.mp4' or name contains '.MP4')","fields","nextPageToken,files(id,name,size,mimeType,thumbnailLink)","pageSize","100","orderBy","name");
+                Map<String,String> p=params("q","'"+quoted(folderId)+"' in parents and trashed = false and (mimeType = 'video/mp4' or name contains '.mp4' or name contains '.MP4')","fields","nextPageToken,files(id,name,size,mimeType,thumbnailLink,createdTime,videoMediaMetadata(durationMillis))","pageSize","100","orderBy","name");
                 if(page!=null)p.put("pageToken",page);
                 JSONObject response=drive("files",p);
                 JSONArray items=response.getJSONArray("files");ArrayList<Video> found=new ArrayList<>();
-                for(int i=0;i<items.length();i++){JSONObject f=items.getJSONObject(i);found.add(new Video(f.getString("id"),f.getString("name"),f.optString("size",""),f.optString("thumbnailLink","")));}
+                for(int i=0;i<items.length();i++){JSONObject f=items.getJSONObject(i);found.add(new Video(f.getString("id"),f.getString("name"),f.optString("size",""),f.optString("thumbnailLink",""),f.optString("createdTime",""),parseDuration(f.optJSONObject("videoMediaMetadata"))));}
                 String next=response.optString("nextPageToken",null);
                 runOnUiThread(()->{
                     videos.addAll(found);nextPage=next;loading=false;more.setEnabled(true);more.setVisibility(nextPage==null?View.GONE:View.VISIBLE);
@@ -174,6 +188,17 @@ public class MainActivity extends Activity {
                 });
             }catch(Exception e){runOnUiThread(()->{loading=false;more.setEnabled(true);setStatus("Video list error: "+e.getMessage());});}
         });
+    }
+    private long parseDuration(JSONObject metadata){
+        if(metadata==null)return -1;
+        try{return Long.parseLong(metadata.optString("durationMillis","-1"));}
+        catch(NumberFormatException e){return -1;}
+    }
+    private String durationText(long millis){
+        if(millis<0)return "Duration unavailable";
+        long seconds=millis/1000;
+        if(seconds>=3600)return String.format(Locale.US,"%d:%02d:%02d",seconds/3600,(seconds/60)%60,seconds%60);
+        return String.format(Locale.US,"%d:%02d",seconds/60,seconds%60);
     }
     private void play(Video video){
         Intent intent=new Intent(this,PlayerActivity.class);
@@ -203,8 +228,17 @@ public class MainActivity extends Activity {
         cards.removeAllViews();
         String query=search.getText().toString().toLowerCase(Locale.ROOT);
         int width=(getResources().getDisplayMetrics().widthPixels-dp(48))/2;
+        ArrayList<Video> sorted=new ArrayList<>(videos);
+        int mode=sortBy==null?0:sortBy.getSelectedItemPosition();
+        Comparator<Video> byName=(a,b)->a.name.compareToIgnoreCase(b.name);
+        if(mode==1)sorted.sort(byName.reversed());
+        else if(mode==2)sorted.sort((a,b)->b.created.compareTo(a.created));
+        else if(mode==3)sorted.sort((a,b)->a.created.compareTo(b.created));
+        else if(mode==4)sorted.sort((a,b)->Long.compare(b.durationMs,a.durationMs));
+        else if(mode==5)sorted.sort((a,b)->Long.compare(a.durationMs<0?Long.MAX_VALUE:a.durationMs,b.durationMs<0?Long.MAX_VALUE:b.durationMs));
+        else sorted.sort(byName);
         int count=0;
-        for(Video video:videos){
+        for(Video video:sorted){
             if(!video.name.toLowerCase(Locale.ROOT).contains(query))continue;
             count++;
             LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);
@@ -216,10 +250,13 @@ public class MainActivity extends Activity {
             tile.addView(image,new LinearLayout.LayoutParams(-1,dp(112)));
             TextView title=text(video.name,13);title.setMaxLines(2);
             title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            tile.addView(title,new LinearLayout.LayoutParams(-1,dp(54)));
+            tile.addView(title,new LinearLayout.LayoutParams(-1,dp(48)));
+            TextView duration=text(durationText(video.durationMs),12);
+            duration.setTextColor(0xffb6c3d9);
+            tile.addView(duration,new LinearLayout.LayoutParams(-1,dp(30)));
             tile.setOnClickListener(v->play(video));
             GridLayout.LayoutParams lp=new GridLayout.LayoutParams();
-            lp.width=width;lp.height=dp(184);
+            lp.width=width;lp.height=dp(210);
             lp.setMargins(0,dp(3),0,dp(3));cards.addView(tile,lp);
             showThumbnail(video,image);
         }
