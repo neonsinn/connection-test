@@ -9,8 +9,24 @@ android {
         versionCode 1
         versionName '0.1.0'
     }
+    signingConfigs {
+        permanent {
+            def keyPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (keyPath) {
+                storeFile file(keyPath)
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (System.getenv("ANDROID_KEYSTORE_PATH")) {
+                signingConfig signingConfigs.permanent
+            }
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
