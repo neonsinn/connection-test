@@ -17,25 +17,55 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      # GitHub-hosted ubuntu runners include an Android SDK. The setup-android
-      # action fails on some images when it tries to install obsolete 'tools'.
       - name: Check Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME/platforms" || exit 1
-          ls "$ANDROID_HOME/platforms"
+          test -d "$ANDROID_HOME/platforms"
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK
+      - name: Prepare permanent signing
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/drivelibrary.jks"
+            chmod 600 "$RUNNER_TEMP/drivelibrary.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/drivelibrary.jks" >> "$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Permanent signing secrets not configured. Building debug APK only."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build permanent signed APK
+        if: steps.signing.outputs.ready == 'true'
+        working-directory: android
+        run: gradle --no-daemon assembleRelease
+      - name: Verify permanent signing fingerprint
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk
+      - name: Upload permanent APK
+        if: steps.signing.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-video-library-signed-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 14
+      - name: Build debug APK until signing configured
+        if: steps.signing.outputs.ready != 'true'
         working-directory: android
         run: gradle --no-daemon assembleDebug
-      - name: Show APK signing fingerprint
-        run: |
-          echo "DEBUG APK SIGNING CERTIFICATE (this runner only):"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
-          echo "NOTE: Debug signing keys may change on the next GitHub runner."
-      - uses: actions/upload-artifact@v4
+      - name: Upload debug APK
+        if: steps.signing.outputs.ready != 'true'
+        uses: actions/upload-artifact@v4
         with:
           name: drive-video-library-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
