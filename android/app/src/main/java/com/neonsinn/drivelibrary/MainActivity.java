@@ -38,7 +38,6 @@ public class MainActivity extends Activity {
     private GridLayout cards;
     private LinearLayout folderSection;
     private TextView status, heading;
-    private EditText search;
     private Spinner sortBy;
     private static final String[] SORT_OPTIONS={"Name A–Z","Name Z–A","Newest first","Oldest first","Longest first","Shortest first"};
     private Button more;
@@ -81,8 +80,6 @@ public class MainActivity extends Activity {
         root.addView(button("Refresh videos",v->loadVideos(true)));
         heading=text(browsingName,20);root.addView(heading);
         folderSection=new LinearLayout(this);folderSection.setOrientation(LinearLayout.VERTICAL);root.addView(folderSection);
-        search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(0xffabb1c2);search.setHint("Search video filenames");root.addView(search);
-        search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){render();}public void afterTextChanged(Editable e){}});
         sortBy=new Spinner(this);
         ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,SORT_OPTIONS);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -274,9 +271,8 @@ public class MainActivity extends Activity {
         });
     }
     private void render(){
-        if(cards==null || search==null)return;
+        if(cards==null)return;
         cards.removeAllViews();
-        String query=search.getText().toString().toLowerCase(Locale.ROOT);
         int width=(getResources().getDisplayMetrics().widthPixels-dp(48))/2;
         ArrayList<Video> sorted=new ArrayList<>(videos);
         int mode=sortBy==null?0:sortBy.getSelectedItemPosition();
@@ -289,7 +285,6 @@ public class MainActivity extends Activity {
         else sorted.sort(byName);
         int count=0;
         for(Video video:sorted){
-            if(!video.name.toLowerCase(Locale.ROOT).contains(query))continue;
             count++;
             LinearLayout tile=new LinearLayout(this);tile.setOrientation(LinearLayout.VERTICAL);
             tile.setPadding(dp(4),dp(5),dp(4),dp(14));
@@ -311,7 +306,7 @@ public class MainActivity extends Activity {
             lp.setMargins(0,dp(3),0,dp(3));cards.addView(tile,lp);
             showThumbnail(video,image);
         }
-        if(count==0){TextView empty=text(videos.isEmpty()?"No videos loaded yet.":"No matching filenames.",14);
+        if(count==0){TextView empty=text("No videos in this folder.",14);
             GridLayout.LayoutParams lp=new GridLayout.LayoutParams();lp.width=-1;cards.addView(empty,lp);}
     }
     private void disconnect(){
