@@ -30,9 +30,13 @@ public class MainActivity extends Activity {
     private final android.util.LruCache<String,Bitmap> thumbnailCache = new android.util.LruCache<>(40);
     private GoogleSignInAccount account;
     private String token, folderId, folderName, nextPage;
+    private String browsingId, browsingName;
+    private final ArrayList<String[]> folderTrail=new ArrayList<>();
+    private final ArrayList<String[]> subfolders=new ArrayList<>();
     private final ArrayList<Video> videos = new ArrayList<>();
     private LinearLayout root;
     private GridLayout cards;
+    private LinearLayout folderSection;
     private TextView status, heading;
     private EditText search;
     private Spinner sortBy;
@@ -53,6 +57,7 @@ public class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(0);
         folderId=getPreferences(0).getString("folderId",null);
         folderName=getPreferences(0).getString("folderName","Choose a folder");
+        browsingId=folderId;browsingName=folderName;
         account=GoogleSignIn.getLastSignedInAccount(this);
         buildUI();
         if(account!=null) authorize(); else setStatus("Connect your Google account to begin.");
@@ -74,7 +79,8 @@ public class MainActivity extends Activity {
         root.addView(button("Connect Google Drive",v->signIn()));
         root.addView(button("Choose Drive folder",v->chooseFolder("root","My Drive",new ArrayList<>())));
         root.addView(button("Refresh videos",v->loadVideos(true)));
-        heading=text(folderName,20);root.addView(heading);
+        heading=text(browsingName,20);root.addView(heading);
+        folderSection=new LinearLayout(this);folderSection.setOrientation(LinearLayout.VERTICAL);root.addView(folderSection);
         search=new EditText(this);search.setSingleLine(true);search.setTextColor(Color.WHITE);search.setHintTextColor(0xffabb1c2);search.setHint("Search video filenames");root.addView(search);
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){render();}public void afterTextChanged(Editable e){}});
         sortBy=new Spinner(this);
@@ -155,7 +161,8 @@ public class MainActivity extends Activity {
                 runOnUiThread(()->{
                     setStatus("Choose a folder, then tap Use this folder.");
                     AlertDialog.Builder builder=new AlertDialog.Builder(this).setTitle(name).setPositiveButton("Use this folder",(d,w)->{
-                        folderId=id;folderName=name;getPreferences(0).edit().putString("folderId",id).putString("folderName",name).apply();heading.setText(name);loadVideos(true);
+                        folderId=id;folderName=name;folderTrail.clear();browsingId=id;browsingName=name;
+                        getPreferences(0).edit().putString("folderId",id).putString("folderName",name).apply();heading.setText(name);loadVideos(true);
                     }).setNegativeButton("Cancel",null);
                     builder.setItems(names.toArray(new String[0]),(d,index)->{
                         if(ids.get(index).equals("__back")){
@@ -173,25 +180,64 @@ public class MainActivity extends Activity {
     }
     private void loadVideos(boolean reset){
         if(token==null){setStatus("Connect Google Drive first.");return;}
-        if(folderId==null){setStatus("Choose a Drive folder first.");return;}
+        if(browsingId==null){setStatus("Choose a Drive folder first.");return;}
         if(loading)return;
-        loading=true;if(reset){videos.clear();nextPage=null;render();}
+        loading=true;if(reset){videos.clear();subfolders.clear();nextPage=null;render();renderFolders();}
         setStatus("Loading videos…");more.setEnabled(false);
         String page=nextPage;
         io.execute(()->{
             try{
-                Map<String,String> p=params("q","'"+quoted(folderId)+"' in parents and trashed = false and (mimeType = 'video/mp4' or name contains '.mp4' or name contains '.MP4')","fields","nextPageToken,files(id,name,size,mimeType,thumbnailLink,createdTime,videoMediaMetadata(durationMillis))","pageSize","100","orderBy","name");
+                Map<String,String> p=params("q","'"+quoted(browsingId)+"' in parents and trashed = false and (mimeType = 'application/vnd.google-apps.folder' or mimeType = 'video/mp4' or name contains '.mp4' or name contains '.MP4')","fields","nextPageToken,files(id,name,size,mimeType,thumbnailLink,createdTime,videoMediaMetadata(durationMillis))","pageSize","100","orderBy","name");
                 if(page!=null)p.put("pageToken",page);
                 JSONObject response=drive("files",p);
                 JSONArray items=response.getJSONArray("files");ArrayList<Video> found=new ArrayList<>();
-                for(int i=0;i<items.length();i++){JSONObject f=items.getJSONObject(i);found.add(new Video(f.getString("id"),f.getString("name"),f.optString("size",""),f.optString("thumbnailLink",""),f.optString("createdTime",""),parseDuration(f.optJSONObject("videoMediaMetadata"))));}
+                ArrayList<String[]> foundFolders=new ArrayList<>();
+                for(int i=0;i<items.length();i++){
+                    JSONObject f=items.getJSONObject(i);
+                    if("application/vnd.google-apps.folder".equals(f.optString("mimeType"))){
+                        foundFolders.add(new String[]{f.getString("id"),f.getString("name")});
+                    }else{
+                        found.add(new Video(f.getString("id"),f.getString("name"),f.optString("size",""),f.optString("thumbnailLink",""),f.optString("createdTime",""),parseDuration(f.optJSONObject("videoMediaMetadata"))));
+                    }
+                }
                 String next=response.optString("nextPageToken",null);
                 runOnUiThread(()->{
-                    videos.addAll(found);nextPage=next;loading=false;more.setEnabled(true);more.setVisibility(nextPage==null?View.GONE:View.VISIBLE);
-                    setStatus(videos.size()+" videos loaded");render();
+                    videos.addAll(found);subfolders.addAll(foundFolders);nextPage=next;loading=false;more.setEnabled(true);more.setVisibility(nextPage==null?View.GONE:View.VISIBLE);
+                    setStatus(videos.size()+" videos loaded · "+subfolders.size()+" folders");renderFolders();render();
                 });
             }catch(Exception e){runOnUiThread(()->{loading=false;more.setEnabled(true);setStatus("Video list error: "+e.getMessage());});}
         });
+    }
+    private void openSubfolder(String id,String name){
+        if(loading)return;
+        folderTrail.add(new String[]{browsingId,browsingName});
+        browsingId=id;browsingName=name;heading.setText(name);
+        loadVideos(true);
+    }
+    private void goBackFolder(){
+        if(loading || folderTrail.isEmpty())return;
+        String[] parent=folderTrail.remove(folderTrail.size()-1);
+        browsingId=parent[0];browsingName=parent[1];heading.setText(browsingName);
+        loadVideos(true);
+    }
+    private void renderFolders(){
+        if(folderSection==null)return;
+        folderSection.removeAllViews();
+        if(!folderTrail.isEmpty()){
+            Button back=button("← Back to parent folder",v->goBackFolder());
+            folderSection.addView(back);
+        }
+        ArrayList<String[]> sorted=new ArrayList<>(subfolders);
+        sorted.sort((a,b)->a[1].compareToIgnoreCase(b[1]));
+        for(String[] folder:sorted){
+            Button entry=button("📁  "+folder[1],v->openSubfolder(folder[0],folder[1]));
+            entry.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);
+            folderSection.addView(entry);
+        }
+    }
+    @Override public void onBackPressed(){
+        if(!folderTrail.isEmpty()){goBackFolder();return;}
+        super.onBackPressed();
     }
     private long parseDuration(JSONObject metadata){
         if(metadata==null)return -1;
